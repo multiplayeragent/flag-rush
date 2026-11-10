@@ -1,0 +1,852 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flag Rush</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #6dbcf5; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 2px 4px #0008; }
+  #place { top: max(10px, env(safe-area-inset-top)); left: max(14px, env(safe-area-inset-left)); font: 900 30px/1.05 system-ui, sans-serif; }
+  #place small { display: block; font-size: 13px; font-weight: 700; opacity: .92; }
+  #track { top: calc(max(10px, env(safe-area-inset-top)) + 12px); right: max(36px, calc(env(safe-area-inset-right) + 36px)); width: min(420px, 52vw); height: 8px; border-radius: 4px; background: #00000038; }
+  #track i { position: absolute; top: -4px; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%; border: 2px solid #fff; box-sizing: border-box; }
+  #track i.me { width: 22px; height: 22px; top: -7px; margin-left: -11px; z-index: 2; box-shadow: 0 0 0 2px #ffd23f; }
+  #track b { position: absolute; right: -18px; top: -13px; font-size: 22px; }
+  #track[hidden], #over[hidden], .pad[hidden] { display: none; }
+  #msg { top: 26%; left: 0; right: 0; text-align: center; font: 900 72px/1 system-ui, sans-serif; color: #ffd23f; -webkit-text-stroke: 3px #6a3200; }
+  #msg small { display: block; margin-top: 10px; font-size: 22px; color: #fff; -webkit-text-stroke: 0; }
+  #hint { top: calc(max(10px, env(safe-area-inset-top)) + 40px); left: 0; right: 0; text-align: center; font-size: 15px; font-weight: 700; }
+  #net { bottom: max(6px, env(safe-area-inset-bottom)); left: 0; right: 0; text-align: center; font-size: 12px; opacity: .8; }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #0b254a99; }
+  .card { width: min(360px, 90vw); max-height: 86vh; overflow: auto; padding: 20px; border-radius: 16px; background: #173a66; border: 1px solid #ffffff30; text-align: center; box-sizing: border-box; }
+  .card h2 { margin: 0 0 4px; font-size: 26px; color: #ffd23f; }
+  .card h3 { margin: 14px 0 4px; font-size: 13px; color: #9fd8ff; text-align: left; }
+  .card ol { margin: 0; padding-left: 24px; font-size: 14px; text-align: left; }
+  .card li span { float: right; font-variant-numeric: tabular-nums; } .card li.me { color: #ffd23f; font-weight: 700; }
+  .card p { margin: 10px 0 0; font-size: 13px; opacity: .75; }
+  button.go { width: 100%; min-height: 48px; margin-top: 16px; border: 0; border-radius: 12px; background: #ffd23f; color: #3a2400; font: 800 17px system-ui, sans-serif; cursor: pointer; }
+  .pad { position: fixed; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 12px); display: flex; gap: 12px; touch-action: none; }
+  .pad button { width: 78px; height: 78px; border-radius: 50%; border: 2px solid #ffffff88; background: #00000030; color: #fff; font: 800 18px system-ui, sans-serif; touch-action: none; }
+  .pad button.on { background: #ffffff55; }
+  #padL { left: max(14px, env(safe-area-inset-left)); } #padR { right: max(14px, env(safe-area-inset-right)); }
+  #padR button { width: 92px; height: 92px; background: #ff5a5f55; }
+  @media (max-width: 560px) { #hint { top: calc(max(10px, env(safe-area-inset-top)) + 70px); padding: 0 12px; font-size: 14px; } #msg { font-size: 56px; } }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div class="hud" id="place"></div>
+<div class="hud" id="track" hidden><b>🏁</b></div>
+<div class="hud" id="hint"></div>
+<div class="hud" id="msg"></div>
+<div class="hud" id="net">Connecting…</div>
+<div class="pad" id="padL" hidden><button data-k="left">◀</button><button data-k="right">▶</button></div>
+<div class="pad" id="padR" hidden><button data-k="jump">JUMP</button></div>
+<div id="over" hidden><div class="card">
+  <h2 id="overTitle"></h2><div id="overSub"></div>
+  <h3>This race</h3><ol id="results"></ol>
+  <h3>Most flags won</h3><ol id="board"><li>Loading…</li></ol>
+  <button class="go" id="again">Race again</button><p id="next"></p>
+</div></div>
+<script>
+/* ═══ FLAG RUSH · a Multiplayer Agent starter ═══════════════════════════════════════════
+ * Race through the course. First to grab the flag wins. Versus, 2–8 players; bots fill seats.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ speeds, jumps, bots, timers
+ *   CHUNKS ........ the course pieces, drawn as text (legend inside). A race strings a few together.
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host, the shared clock
+ *   COURSE ........ builds one course from a seed: chunks side by side, moving platforms, checkpoints
+ *   RUNNERS ....... one physics step for anyone (you or a bot): run, jump, ride, spring, spikes, bonks
+ *   RACE (HOST) ... countdown, the winner, the next race, and the bots. Only the host writes these.
+ *   BOTS .......... the bot brain: it tries a jump in its head before it takes it
+ *   ME ............ your runner, checkpoints, bonks, the flag. Each player writes only its own.
+ *   DRAW .......... sky, course, platforms, the flag, runners, particles
+ *   HUD & RESULTS . your place, the progress track, the countdown, results, leaderboard
+ *   INPUT ......... keyboard, and touch buttons
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - Each player writes its OWN entity: `p` (one JSON field: position, speed, facing,
+ *     animation, checkpoint, dead/stunned, race id) about 12 times a second, `hb`
+ *     (heartbeat) once a second, and `n`/`c` (name, color) once.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s),
+ *     worked out every frame. Only the host writes `race` (ONE JSON field: id, version v,
+ *     phase grid|race|done, seed, startAt, endsAt, winner, results), `bots` (~10/s) and
+ *     `clk` (its clock, every 2s). A new host adopts all three and carries on.
+ *   - Every client builds the same course from race.seed. Moving platforms move on the
+ *     shared clock (their position is a function of time), so nobody streams them.
+ *   - Intents to the host: "flag" {r} (I touched the flag: the first one wins), "again" {}.
+ *   - Bonks: land on someone's head and you send "bonk" {to}. The one bonked stumbles: it
+ *     applies that to itself (the host does it for bots, and stomps for them too).
+ *   - ?attract plays offline with bots only (the preview video is recorded from it).
+ *   - Leaderboard "flags": +1 for every race you win, shown on the results card.
+ */
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  seats: 6,              // bots fill the race up to this many runners
+  maxRunners: 8,         // when people join mid-race, bots step aside to keep it this many
+  chunks: 6,             // course pieces between the start and the flag (picked by the seed)
+  countdown: 3000,       // ms of "3, 2, 1" before the gate opens
+  resultsMs: 9000,       // ms the results show before the next race
+  raceMs: 120000,        // a race this long ends anyway: whoever got furthest wins
+  run: 7.5,              // run speed, tiles/s
+  airControl: 12,        // how quickly you can change speed in the air (on the ground it's 18)
+  jump: 16,              // jump speed, tiles/s (about 2.8 tiles high and 5 across)
+  gravity: 46, maxFall: 20,
+  cutJump: 2.4,          // let go of jump early and gravity pulls this much harder: a small hop
+  coyote: 0.1, buffer: 0.12, // forgiving jumps (s): a little late off a ledge, a little early before landing
+  spring: 23,            // a spring pad launches you this fast (about 5.7 tiles high)
+  bounce: 13,            // how fast you bounce off someone's head
+  stunMs: 900,           // ms a bonked runner stumbles
+  safeMs: 1600,          // ms nobody can bonk you again after that
+  respawnMs: 700,        // ms after a fall or spikes before you're back at your checkpoint
+  slideRange: 2.5,       // tiles a sliding platform travels each way
+  slidePeriod: 3.4,      // seconds for one slide there and back
+  liftRange: 4,          // tiles a lift rises
+  liftPeriod: 4.2,       // seconds for one ride up and down
+  botPace: [0.84, 0.95], // bots run at this share of top speed (a bit faster when they're behind you)
+  botSlip: 0.08,         // chance a bot fumbles a jump
+  botPause: 0.25,        // chance a bot stops to think at an obstacle
+  sendMs: 80,            // how often your runner is sent (~12/s)
+  board: "flags",        // leaderboard: races won
+};
+const BOT_NAMES = ["Dash", "Zippy", "Pogo", "Boing", "Sprout", "Turbo", "Nugget", "Pip"];
+const COLORS = ["#ff5a5f", "#3d8bff", "#ffb627", "#2fbf71", "#a463f2", "#ff7ac6", "#13c4c4", "#ff8a3d", "#8bd450", "#f2f2f2"];
+
+// ── CHUNKS ──────────────────────────────────────────────────────────────────────────
+// Each piece is drawn bottom-up: its rows sit on the bottom of the 12-row course, and any
+// missing rows on top are air. Every piece starts with ground in its first column (that's
+// where its checkpoint is). Legend (letters and symbols only, never digits):
+//   .  air           #  ground          ^  spikes (back to your checkpoint)
+//   T  spring pad    =  sliding platform (left and right)   H  lift (up and down)
+//   F  the flag (only in "finish")
+const CHUNKS = {
+  start: ["########", "########", "########"],
+  steps: [
+    ".........##.....",
+    "......#####.....",
+    "...########.....",
+    "################", "################", "################"],
+  spikes: [
+    "....^^^.....^^..",
+    "################", "################", "################"],
+  gap: [
+    "#####....#######", "#####....#######", "#####....#######"],
+  slider: [
+    "###...===....###", "###..........###", "###..........###"],
+  lift: [
+    ".........#######",
+    ".........#######",
+    ".........#######",
+    ".........#######",
+    "###.HHH..#######", "###......#######", "###......#######"],
+  springWall: [
+    ".........#######",
+    ".........#######",
+    ".........#######",
+    "#####TT#########", "################", "################"],
+  islands: [
+    "........##......",
+    "....##......##..",
+    "##............##", "##............##", "##............##"],
+  spikeBlocks: [
+    "......###.......",
+    "###^^^###^^^####", "################", "################"],
+  twoSliders: [
+    "##...===......===...##", "##..................##", "##..................##"],
+  springSpikes: [
+    "##TT^^^#########", "################", "################"],
+  finish: [
+    "..........F...",
+    "##############", "##############", "##############"],
+};
+const ATTRACT_CHUNKS = ["slider", "springSpikes", "islands", "lift", "twoSliders", "springWall"]; // the preview's course
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'flag-rush',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+const parsed = new Map();
+/** A JSON value from state, parsed once per change (read-only: never mutate what this returns). */
+function parseOnce(key, raw, fallback) {
+  const c = parsed.get(key);
+  if (c && c.raw === raw) return c.v;
+  const v = parse(raw, fallback); parsed.set(key, { raw, v }); return v;
+}
+const shared = (key, fallback) => parseOnce("s:" + key, S.shared[key], fallback);
+let net = null, S = { entities: { players: {} }, shared: {} };
+const seenHb = new Map();
+/** Players whose heartbeat moved in the last 3s (plus us), sorted by sessionId. */
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+const isHost = () => livePlayers()[0] === net.sessionId;
+const humansHere = () => livePlayers().filter((id) => !(ATTRACT && id === net.sessionId));
+// The shared clock: the host's Date.now() plus its own offset, learned from `clk` changes.
+const clockSync = { offset: 0, seen: undefined, samples: [], lastWrite: 0 };
+const clock = () => Date.now() + clockSync.offset;
+function syncClock(now) {
+  if (isHost()) { if (now - clockSync.lastWrite > 2000) { clockSync.lastWrite = now; net.setShared("clk", clock()); } return; }
+  const clk = Number(S.shared.clk);
+  if (!clk || clk === clockSync.seen) return;
+  if (clockSync.seen !== undefined) { // the first value we see may be old; later changes are fresh
+    clockSync.samples = [...clockSync.samples.slice(-4), clk - Date.now()];
+    clockSync.offset = Math.max(...clockSync.samples); // the least-delayed sample is the best
+  }
+  clockSync.seen = clk;
+}
+
+// ── COURSE ──────────────────────────────────────────────────────────────────────────
+const ROWS = 12, SOLID = "#T";
+function mulberry32(a) { return () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+let C = null; // the course: { seed, cols, grid (one string per row), movers, cps (checkpoint columns), flag }
+/** One course from a seed: the start, CONFIG.chunks pieces in a seeded order, the finish. */
+function buildCourse(seed) {
+  const rnd = mulberry32(seed), bag = Object.keys(CHUNKS).filter((k) => k !== "start" && k !== "finish"), pick = [];
+  if (ATTRACT) pick.push(...ATTRACT_CHUNKS);
+  else while (pick.length < CONFIG.chunks && bag.length) pick.push(bag.splice(Math.floor(rnd() * bag.length), 1)[0]);
+  const rows = Array.from({ length: ROWS }, () => ""), cps = [], movers = [];
+  ["start", ...pick, "finish"].forEach((name, ci) => {
+    const map = CHUNKS[name], w = map[0].length, x0 = rows[0].length, pad = ROWS - map.length;
+    let k = 0; // platforms in one piece take turns: the second moves opposite to the first
+    cps.push(x0);
+    for (let r = 0; r < ROWS; r++) {
+      const line = r < pad ? ".".repeat(w) : map[r - pad];
+      rows[r] += line.replace(/=+|H+/g, (run, at) => { movers.push({ kind: run[0] === "=" ? "slide" : "lift", x: x0 + at, y: r, w: run.length, phase: k++ * Math.PI + ci * 1.3 }); return ".".repeat(run.length); });
+    }
+  });
+  let flag = { x: rows[0].length - 3, y: ROWS - 3 };
+  rows.forEach((line, r) => { const c = line.indexOf("F"); if (c >= 0) { flag = { x: c, y: r + 1 }; rows[r] = line.replace("F", "."); } });
+  return { seed, cols: rows[0].length, grid: rows, movers, cps, flag };
+}
+function ensureCourse(r) { if (!C || C.seed !== r.seed) { C = buildCourse(r.seed); paintCourse(C); } }
+const tileAt = (c, r) => (r < 0 || r >= ROWS ? "." : c < 0 || c >= C.cols ? "#" : C.grid[r][c]);
+const solid = (c, r) => SOLID.includes(tileAt(c, r));
+/** Where a moving platform is at clock time t (seconds): its left edge x and its top y. */
+function moverAt(m, t) {
+  if (m.kind === "slide") return { x: m.x + CONFIG.slideRange * Math.sin((t * Math.PI * 2) / CONFIG.slidePeriod + m.phase), y: m.y };
+  return { x: m.x, y: m.y - CONFIG.liftRange * (0.5 - 0.5 * Math.cos((t * Math.PI * 2) / CONFIG.liftPeriod + m.phase)) };
+}
+/** The ground height at column c: the top of the first solid tile from the top. */
+function surfaceAt(c) { for (let r = 0; r < ROWS; r++) if (solid(c, r)) return r; return ROWS - 3; }
+
+// ── RUNNERS ─────────────────────────────────────────────────────────────────────────
+const HW = 0.34, HH = 0.9; // half width and height of a runner, in tiles (x is the middle, y the feet)
+function placeRunner(b, x, y) { return Object.assign(b, { x, y, py: y, vx: 0, vy: 0, ground: null, coyote: 0, buffer: 0, boosted: false, dead: false, stun: 0 }); }
+const newRunner = (x, y) => placeRunner({ f: 1, cp: 0, pace: 1, safe: 0, deadAt: 0, plan: {}, thinkAt: 0, waitUntil: 0, edge: false, bestX: 0, progressAt: 0 }, x, y);
+const anim = (b) => (!b.ground ? 2 : Math.abs(b.vx) > 0.8 ? 1 : 0);
+/** Does the runner overlap a `ch` tile, shrunk by pad [left, top, right, bottom]? */
+function touching(b, ch, pad) {
+  for (let r = Math.floor(b.y - HH); r <= Math.floor(b.y - 0.01); r++) for (let c = Math.floor(b.x - HW); c <= Math.floor(b.x + HW); c++)
+    if (tileAt(c, r) === ch && b.x + HW > c + pad[0] && b.x - HW < c + 1 - pad[2] && b.y > r + pad[1] && b.y - HH < r + 1 - pad[3]) return true;
+  return false;
+}
+/** One physics step. input = { dir -1|0|1, jump (pressed now), held }. t = clock seconds. Returns "jump", "land", "spring", "dead" or null. */
+function stepRunner(b, inp, dt, t) {
+  if (b.dead) return null;
+  let ev = null;
+  if (b.ground && b.ground.kind) { const a = moverAt(b.ground, t - dt), c = moverAt(b.ground, t); b.x += c.x - a.x; b.y = c.y; } // ride the platform
+  const ctl = b.stun <= 0, dir = ctl ? inp.dir || 0 : 0;
+  b.stun = Math.max(0, b.stun - dt);
+  b.vx += (dir * CONFIG.run * (b.ground ? b.pace || 1 : 1) - b.vx) * Math.min(1, (b.ground ? 18 : CONFIG.airControl) * dt); // pace (bots) slows running, never jumps
+  if (dir) b.f = dir;
+  b.coyote = b.ground ? CONFIG.coyote : b.coyote - dt;
+  b.buffer = ctl && inp.jump ? CONFIG.buffer : b.buffer - dt;
+  if (b.buffer > 0 && b.coyote > 0) {
+    b.vy = -CONFIG.jump; b.coyote = b.buffer = 0; b.boosted = false; ev = "jump";
+    if (b.ground && b.ground.kind) { const a = moverAt(b.ground, t - 0.05), c = moverAt(b.ground, t); b.vx += (c.x - a.x) / 0.05; b.vy += Math.min(0, (c.y - a.y) / 0.05); } // jumping off a platform keeps its push
+    b.ground = null;
+  }
+  b.vy = Math.min(CONFIG.maxFall, b.vy + CONFIG.gravity * (b.vy < 0 && !inp.held && !b.boosted ? CONFIG.cutJump : 1) * dt);
+  b.x += b.vx * dt; // across, then out of any block to the nearer side
+  for (let r = Math.floor(b.y - HH + 0.01); r <= Math.floor(b.y - 0.01); r++) {
+    if (solid(Math.floor(b.x + HW), r)) { b.x = Math.floor(b.x + HW) - HW - 0.001; if (b.vx > 0) b.vx = 0; }
+    if (solid(Math.floor(b.x - HW), r)) { b.x = Math.floor(b.x - HW) + 1 + HW + 0.001; if (b.vx < 0) b.vx = 0; }
+  }
+  const was = b.ground; b.py = b.y; b.y += b.vy * dt; b.ground = null; // then up and down
+  for (let c = Math.floor(b.x - HW + 0.01); c <= Math.floor(b.x + HW - 0.01); c++) {
+    const below = Math.floor(b.y), above = Math.floor(b.y - HH);
+    if (b.vy >= 0 && solid(c, below)) { b.y = below; b.vy = 0; if (!b.ground || tileAt(c, below) === "T") b.ground = { tile: tileAt(c, below) }; }
+    else if (b.vy < 0 && solid(c, above)) { b.y = above + 1 + HH; b.vy = 0; }
+  }
+  if (!b.ground && b.vy >= 0) for (const m of C.movers) { // platforms catch you from above; you jump up through them
+    const a = moverAt(m, t), p = moverAt(m, t - dt);
+    if (b.x + HW > a.x + 0.05 && b.x - HW < a.x + m.w - 0.05 && (was === m || b.py <= p.y + 0.06) && b.y >= a.y - 0.02) { b.y = a.y; b.vy = 0; b.ground = m; break; }
+  }
+  if (b.ground && b.ground.tile === "T") { b.vy = -CONFIG.spring; b.ground = null; b.coyote = 0; b.boosted = true; return "spring"; }
+  if (b.ground) b.boosted = false;
+  if (touching(b, "^", [0.15, 0.45, 0.15, 0]) || b.y > ROWS + 1.5) { b.dead = true; return "dead"; }
+  return ev || (b.ground && !was ? "land" : null);
+}
+/** Did runner b just come down on someone's head? Returns that one (and bounces b), or null. */
+function stompOn(b, others) {
+  if (b.dead || b.ground || b.y <= b.py) return null; // only on the way down
+  for (const o of others) {
+    if (o.id === b.id || o.dead) continue;
+    const top = o.y - HH;
+    if (b.py <= top + 0.15 && b.y >= top - 0.05 && Math.abs(b.x - o.x) < HW * 1.8) { b.y = top; b.vy = -CONFIG.bounce; b.boosted = true; b.coyote = 0; return o; }
+  }
+  return null;
+}
+/** Bonked: stumble for a moment, unless you were bonked just now. */
+function getBonked(b, now) {
+  if (b.dead || now < b.safe) return false;
+  b.stun = CONFIG.stunMs / 1000; b.safe = now + CONFIG.safeMs; b.vx *= 0.2;
+  return true;
+}
+function passCheckpoints(b) { let moved = false; while (b.cp + 1 < C.cps.length && b.x > C.cps[b.cp + 1] + 0.6) { b.cp++; moved = true; } return moved; }
+function respawn(b) { const c = C.cps[b.cp] + 1; placeRunner(b, c + 0.5, surfaceAt(c)); b.safe = performance.now() + 1000; b.plan = {}; b.progressAt = performance.now(); }
+const startX = (slot) => 1.2 + (slot % 8) * 0.75;
+const touchingFlag = (b) => !b.dead && Math.abs(b.x - (C.flag.x + 0.5)) < 0.6 && b.y > C.flag.y - 3.6 && b.y - HH < C.flag.y;
+
+// ── RACE (HOST) ─────────────────────────────────────────────────────────────────────
+const host = { acting: false, last: null, bots: new Map(), lastBots: 0, raceId: -1, again: false };
+/** The race as state has it, or the host's own newer write that hasn't come back yet. `v` only goes up. */
+function race() {
+  const r = shared("race", null);
+  return host.last && isHost() && (!r || host.last.v > r.v) ? host.last : r;
+}
+function writeRace(r) { r = { ...r, v: (race()?.v ?? 0) + 1 }; host.last = r; net.setShared("race", JSON.stringify(r)); return r; }
+const newRace = (id) => ({ id, phase: "grid", seed: (Math.random() * 1e9) | 0, startAt: clock() + CONFIG.countdown, endsAt: 0, winner: "", wn: "", results: [] });
+/** Become host: adopt the bots exactly as state has them (the race itself stays in state). */
+function adopt() {
+  host.acting = true; host.last = null; host.bots.clear(); host.raceId = race()?.id ?? -1;
+  for (const s of shared("bots", [])) host.bots.set(s.i, Object.assign(newRunner(s.x, s.y), { id: s.i, name: s.n, color: s.c, f: s.f || 1, vx: s.vx || 0, vy: s.vy || 0, cp: s.cp || 0, pace: s.pc || 0.9, basePace: s.pc || 0.9, dead: !!s.d, deadAt: performance.now(), progressAt: performance.now(), bestX: s.x }));
+}
+/** A new race: as many bots as empty seats, everyone back on the start line. */
+function seatBots() {
+  const humans = humansHere(), want = Math.max(0, Math.min(CONFIG.seats, CONFIG.maxRunners) - humans.length);
+  while (host.bots.size > want) host.bots.delete([...host.bots.keys()].pop());
+  while (host.bots.size < want) {
+    const used = new Set([...host.bots.values()].map((b) => b.name)), taken = new Set([...humans.map(colorOf), ...[...host.bots.values()].map((b) => b.color)]);
+    const id = "b" + Math.random().toString(36).slice(2, 6), pace = CONFIG.botPace[0] + Math.random() * (CONFIG.botPace[1] - CONFIG.botPace[0]);
+    host.bots.set(id, Object.assign(newRunner(0, 0), { id, name: BOT_NAMES.find((n) => !used.has(n)) || "Bot", color: COLORS.find((c) => !taken.has(c)) || "#ccc", pace, basePace: pace }));
+  }
+  let slot = humans.length;
+  for (const b of host.bots.values()) { placeRunner(b, startX(slot++), surfaceAt(1)); Object.assign(b, { cp: 0, bestX: 0, progressAt: performance.now(), plan: {}, waitUntil: performance.now() + Math.random() * 300 }); }
+}
+/** The race is over: `winner` grabbed the flag (or got furthest). One write, everyone sees it. */
+function finishRace(r, winner) {
+  const all = standings(winner);
+  return writeRace({ ...r, phase: "done", winner, wn: (all.find((s) => s.id === winner) || {}).name || "", endsAt: clock() + CONFIG.resultsMs, results: all.slice(0, 8).map((s) => ({ i: s.id, n: s.name, c: s.color })) });
+}
+/** A "flag" intent: the first one to touch it (and really be next to it) wins. */
+function applyFlag(from, rid) {
+  const r = race();
+  if (!r || r.phase !== "race" || r.id !== rid || r.winner) return;
+  const s = standings().find((x) => x.id === from);
+  if (s && Math.abs(s.x - (C.flag.x + 0.5)) < 3) finishRace(r, from);
+}
+function hostTick(dt, now, t) {
+  if (!host.acting) adopt();
+  let r = race();
+  if (!r) r = writeRace(newRace(1));
+  ensureCourse(r);
+  if (host.raceId !== r.id) { host.raceId = r.id; seatBots(); }
+  const T = clock();
+  if (r.phase === "grid" && T >= r.startAt) r = writeRace({ ...r, phase: "race" });
+  if (r.phase === "race" && T - r.startAt > CONFIG.raceMs) r = finishRace(r, standings()[0].id);
+  if (r.phase === "done" && (T >= r.endsAt || host.again)) r = writeRace(newRace(r.id + 1));
+  host.again = false;
+  const humans = humansHere().length; // someone joined mid-race: a bot steps aside
+  while (host.bots.size && host.bots.size + humans > CONFIG.maxRunners) host.bots.delete([...host.bots.keys()].pop());
+  const lead = Math.max(-99, ...standings().filter((s) => !s.bot && !(ATTRACT && s.mine)).map((s) => s.x));
+  const bodies = stompTargets();
+  for (const b of host.bots.values()) botTick(b, dt, now, t, lead, bodies);
+  if (now - host.lastBots > 100) { host.lastBots = now; net.setShared("bots", JSON.stringify([...host.bots.values()].map(botWire))); } // ~10/s
+}
+const botWire = (b) => ({ i: b.id, n: b.name, c: b.color, x: +b.x.toFixed(2), y: +b.y.toFixed(2), vx: +b.vx.toFixed(1), vy: +b.vy.toFixed(1), f: b.f, a: anim(b), cp: b.cp, d: b.dead ? 1 : 0, s: b.stun > 0 ? 1 : 0, pc: +b.basePace.toFixed(2) });
+const botList = () => (host.acting ? [...host.bots.values()].map(botWire) : shared("bots", []));
+
+// ── BOTS ────────────────────────────────────────────────────────────────────────────
+// Jump plans a bot tries in its head: how long it holds jump, how long it keeps running right.
+const PLANS = [{ hold: 1, run: 9 }, { hold: 1, run: 0.42 }, { hold: 1, run: 0.22 }, { hold: 0.12, run: 9 }, { hold: 0.12, run: 0.25 }];
+/** What's just ahead of a runner heading right: "ok", "wall", "spike" or "pit". */
+function lookAhead(b, t) {
+  const c = Math.floor(b.x + HW + 0.3), body = Math.floor(b.y - 0.5);
+  if (solid(c, body) || solid(c, Math.floor(b.y - HH + 0.05))) return "wall";
+  if (b.ground && b.ground.kind && b.x + HW + 0.3 < moverAt(b.ground, t).x + b.ground.w) return "ok"; // still on the platform
+  for (let r = body; r <= body + 4 && r < ROWS; r++) { const ch = tileAt(c, r); if (ch === "^") return "spike"; if (SOLID.includes(ch)) return "ok"; }
+  return "pit";
+}
+/** Try a jump without taking it: does it come down safely, further along? */
+function jumpWorks(b, t, plan) {
+  const s = Object.assign(newRunner(b.x, b.y), { vx: b.vx, ground: b.ground, coyote: 0.1, pace: b.pace }), dt = 1 / 30;
+  for (let i = 1; i <= 60; i++) {
+    const ev = stepRunner(s, { dir: i * dt < plan.run ? 1 : 0, jump: i === 1, held: i * dt < plan.hold }, dt, t + i * dt);
+    if (s.dead) return false;
+    if (ev === "spring") return true;
+    if (i > 3 && s.ground) return s.x > b.x + 0.6 && !(b.ground && b.ground.kind && s.ground === b.ground);
+  }
+  return false;
+}
+/** The bot brain (also your autopilot in the preview): run right, and at anything risky stop and test jumps until one works. */
+function botInput(b, t, now) {
+  if (now < b.waitUntil) return { dir: 0 };
+  if (now < (b.backUntil || 0)) return { dir: -1 }; // backing up for a run-up
+  if (!b.ground) return { dir: now < (b.plan.runUntil || 0) ? 1 : 0, held: now < (b.plan.holdUntil || 0) };
+  const ahead = lookAhead(b, t);
+  if (ahead === "ok") { b.edge = false; b.plan = { runUntil: now + 250 }; return { dir: 1 }; }
+  if (!b.edge) { b.edge = true; if (Math.random() < CONFIG.botPause) { b.waitUntil = now + 200 + Math.random() * 450; return { dir: 0 }; } }
+  if (now < b.thinkAt) return { dir: 0 };
+  b.thinkAt = now + 60;
+  const plan = PLANS.find((p) => jumpWorks(b, t, p));
+  if (!plan) { // nothing works from here: back up for a run-up if speed would do it, else wait (a platform is away)
+    if (b.ground && !b.ground.kind && Math.abs(b.vx) < CONFIG.run * 0.5 && jumpWorks({ ...b, vx: CONFIG.run }, t, PLANS[0])) { b.backUntil = now + 320; b.edge = false; return { dir: -1 }; }
+    return { dir: 0 };
+  }
+  const slip = Math.random() < CONFIG.botSlip;
+  b.plan = { runUntil: now + plan.run * 1000, holdUntil: now + (slip ? 0.05 : plan.hold) * 1000 };
+  return { dir: 1, jump: true, held: true };
+}
+function botTick(b, dt, now, t, lead, bodies) {
+  const r = race();
+  if (b.dead) { if (now - b.deadAt > CONFIG.respawnMs) respawn(b); return; }
+  const go = r.phase === "race" || (r.phase === "grid" && clock() >= r.startAt);
+  b.pace = Math.min(1, b.basePace + (b.x < lead - 5 ? 0.08 : b.x > lead + 6 ? -0.06 : 0));
+  const ev = stepRunner(b, go ? botInput(b, t, now) : { dir: 0 }, dt, t);
+  if (ev === "dead") { b.deadAt = now; poof(b.x, b.y - 0.5, b.color); return; }
+  if (ev === "spring") { b.plan = { runUntil: now + 2000 }; springFx(b); }
+  passCheckpoints(b);
+  const hit = stompOn(b, bodies);
+  if (hit) { b.plan = { runUntil: now + 500 }; bonk(hit, b.id); }
+  const cur = race();
+  if (cur.phase === "race" && !cur.winner && touchingFlag(b)) finishRace(cur, b.id);
+  if (b.x > b.bestX + 0.5) { b.bestX = b.x; b.progressAt = now; } else if (go && now - b.progressAt > 9000) respawn(b); // stuck: back to its checkpoint
+}
+
+// ── ME ──────────────────────────────────────────────────────────────────────────────
+const myName = (() => { try { return localStorage.getItem("mpa-name") || ""; } catch { return ""; } })() ||
+  ["Speedy", "Bouncy", "Lucky", "Zippy", "Plucky", "Sunny"][Math.floor(Math.random() * 6)] + " " + ["Fox", "Hare", "Gecko", "Otter", "Frog", "Kit"][Math.floor(Math.random() * 6)];
+const me = Object.assign(newRunner(1, 9), { id: "", color: COLORS[0], raceId: -1, lastSend: 0, flagSent: -1, shownFor: -1, auto: ATTRACT });
+const input = { left: false, right: false, jump: false, held: false };
+let shake = 0;
+const colorOf = (id) => (id === me.id ? me.color : (S.entities.players?.[id] || {}).c || "#ccc");
+
+/** Everyone in the race, furthest first (the winner, once there is one, on top). */
+function standings(winner = race()?.winner) {
+  const out = [{ id: me.id, name: myName, color: me.color, x: me.x, mine: true }], live = new Set(livePlayers());
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    if (id === me.id || !live.has(id)) continue;
+    const s = parseOnce("p:" + id, p.p, null); if (s) out.push({ id, name: p.n || "Player", color: p.c || "#ccc", x: s.x });
+  }
+  for (const b of botList()) out.push({ id: b.i, name: b.n, color: b.c, x: b.x, bot: true });
+  return out.sort((a, b) => (winner ? (b.id === winner) - (a.id === winner) : 0) || b.x - a.x);
+}
+/** Bodies you can land on: everyone but you, where this screen shows them. */
+function stompTargets() {
+  const out = [...views.values()].map((v) => ({ id: v.id, x: v.x, y: v.y, dead: v.d, bot: v.bot }));
+  if (host.acting) for (const b of host.bots.values()) out.push(b);
+  out.push(me);
+  return out;
+}
+/** Someone landed on `target`: bonk it. Bots are the host's to bonk; people bonk themselves. */
+function bonk(target, by) {
+  const now = performance.now();
+  sfx("bonk"); stars(target.x, target.y - HH, 10);
+  if (target === me) { if (getBonked(me, now)) { shake = 8; floater(me.x, me.y - 1.4, "BONK!", "#ffd23f"); publish(true); } }
+  else if (host.acting && host.bots.has(target.id)) getBonked(host.bots.get(target.id), now);
+  else net.send("bonk", { to: target.id, by });
+}
+function myTick(dt, now, t, r) {
+  if (me.raceId !== r.id) { // a new race: back to the start line
+    me.raceId = r.id; me.cp = 0;
+    placeRunner(me, startX(Math.max(0, humansHere().indexOf(me.id))), surfaceAt(1));
+    $("over").hidden = true;
+  }
+  if (me.dead) { if (now - me.deadAt > CONFIG.respawnMs) { respawn(me); sfx("back"); } publish(false); return; }
+  let inp = { dir: (input.right ? 1 : 0) - (input.left ? 1 : 0), jump: input.jump, held: input.held };
+  input.jump = false;
+  if (me.auto) inp = botInput(me, t, now);
+  if (clock() < r.startAt) inp = { dir: 0 }; // behind the gate
+  const ev = stepRunner(me, inp, dt, t);
+  if (ev === "jump") sfx("jump");
+  if (ev === "land") dust(me.x, me.y, 5);
+  if (ev === "spring") { sfx("spring"); springFx(me); if (me.auto) me.plan = { runUntil: now + 2000 }; }
+  if (ev === "dead") { me.deadAt = now; poof(me.x, me.y - 0.5, me.color); sfx("dead"); shake = 10; }
+  if (passCheckpoints(me) && !ATTRACT) { sfx("cp"); floater(me.x, me.y - 1.5, "Checkpoint", "#7dff9a"); }
+  const hit = stompOn(me, stompTargets());
+  if (hit) { if (me.auto) me.plan = { runUntil: now + 500 }; bonk(hit, me.id); }
+  if (r.phase === "race" && !r.winner && me.flagSent !== r.id && touchingFlag(me)) {
+    me.flagSent = r.id; publish(true); confetti(C.flag.x + 0.5, C.flag.y - 3, 40);
+    if (isHost()) applyFlag(me.id, r.id); else net.send("flag", { r: r.id });
+  }
+  publish(false);
+}
+function publish(force) {
+  const now = performance.now();
+  if (!force && now - me.lastSend < CONFIG.sendMs) return;
+  me.lastSend = now;
+  net.me.set("p", JSON.stringify({ x: +me.x.toFixed(2), y: +me.y.toFixed(2), vx: +me.vx.toFixed(1), vy: +me.vy.toFixed(1), f: me.f, a: anim(me), cp: me.cp, d: me.dead ? 1 : 0, s: me.stun > 0 ? 1 : 0, r: me.raceId }));
+}
+/** Two people in one color: the one with the higher sessionId picks a free color. */
+function fixColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId);
+  if (!others.some(([id, p]) => p.c === me.color && id < net.sessionId)) return;
+  const taken = new Set([...others.map(([, p]) => p.c), ...botList().map((b) => b.c)]), free = COLORS.find((c) => !taken.has(c));
+  if (free) { me.color = free; net.me.set("c", free); }
+}
+
+// ── DRAW ────────────────────────────────────────────────────────────────────────────
+const cv = document.getElementById("game"), ctx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1, TS = 40;
+function fit() { DPR = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * DPR; cv.height = H * DPR; }
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+const cam = { x: 0, oy: 0 };
+const sx = (x) => (x - cam.x) * TS, sy = (y) => cam.oy + y * TS;
+const views = new Map(); // everyone else (people, and bots unless I run them): eased toward their latest state
+/** Ease everyone else toward where they last said they were, guessing a little ahead with their speed. */
+function syncViews(dt) {
+  const now = performance.now(), k = 1 - Math.pow(0.0005, dt), seen = new Set(), live = new Set(livePlayers()), list = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    if (id === me.id || !live.has(id)) continue;
+    const s = parseOnce("p:" + id, p.p, null); if (s) list.push({ id, raw: p.p, s, name: p.n || "Player", color: p.c || "#ccc" });
+  }
+  if (!host.acting) for (const b of shared("bots", [])) list.push({ id: b.i, raw: b, s: b, name: b.n, color: b.c, bot: true });
+  for (const o of list) {
+    seen.add(o.id);
+    let v = views.get(o.id);
+    if (!v) { v = { id: o.id, x: o.s.x, y: o.s.y, raw: null }; views.set(o.id, v); }
+    if (o.raw !== v.raw) { // a fresh update
+      if (o.s.d && !v.d) poof(v.x, v.y - 0.5, o.color);
+      Object.assign(v, { tx: o.s.x, ty: o.s.y, vx: o.s.vx || 0, vy: o.s.vy || 0, f: o.s.f || 1, a: o.s.a, d: o.s.d, s: o.s.s, name: o.name, color: o.color, bot: !!o.bot, raw: o.raw, at: now });
+      if (Math.hypot(v.tx - v.x, v.ty - v.y) > 3) { v.x = v.tx; v.y = v.ty; } // respawned: jump there
+    }
+    const ahead = Math.min(0.1, (now - v.at) / 1000);
+    v.x += (v.tx + v.vx * ahead - v.x) * k; v.y += (v.ty + v.vy * ahead - v.y) * k;
+  }
+  for (const id of views.keys()) if (!seen.has(id)) views.delete(id);
+}
+// Particles and floating text, in tiles
+const parts = [], texts = [], springAt = new Map();
+function spray(x, y, n, color, speed, life, size, grav = 18) { for (let i = 0; i < n && parts.length < 400; i++) { const a = Math.random() * Math.PI * 2, s = speed * (0.3 + Math.random() * 0.7); parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - speed * 0.3, life, max: life, color, size, grav }); } }
+const dust = (x, y, n) => spray(x, y - 0.05, n, "#ffffffcc", 2.5, 0.35, 0.12, 4);
+const poof = (x, y, color) => { spray(x, y, 22, color, 7, 0.7, 0.18); spray(x, y, 10, "#ffffff", 5, 0.5, 0.12); };
+const stars = (x, y, n) => spray(x, y, n, "#ffd23f", 6, 0.5, 0.16, 6);
+const confetti = (x, y, n) => { for (let i = 0; i < n; i++) spray(x, y, 1, COLORS[i % COLORS.length], 9, 1.4, 0.2, 10); };
+function springFx(b) { springAt.set(Math.floor(b.x), performance.now()); spray(b.x, b.y, 8, "#ff5a5f", 4, 0.4, 0.14, 8); }
+function floater(x, y, text, color) { if (!ATTRACT && texts.length < 12) texts.push({ x, y, text, color, t: 0 }); }
+
+const courseCv = document.createElement("canvas"), TP = 32; // the course's tiles, painted once per course
+function paintCourse(c) {
+  courseCv.width = c.cols * TP; courseCv.height = ROWS * TP;
+  const g = courseCv.getContext("2d"), rnd = mulberry32(c.seed ^ 0x51ed);
+  for (let r = 0; r < ROWS; r++) for (let x = 0; x < c.cols; x++) {
+    const ch = c.grid[r][x], X = x * TP, Y = r * TP;
+    if (ch === "#" || ch === "T") {
+      const top = !SOLID.includes(tileAt(x, r - 1)), deep = r - surfaceAt(x);
+      g.fillStyle = deep >= 2 ? "#7a4a2c" : "#8f5b37"; g.fillRect(X, Y, TP, TP);
+      g.fillStyle = "#6c4026"; for (let k = 0; k < 3; k++) g.fillRect(X + 3 + rnd() * 24, Y + 6 + rnd() * 22, 5, 3);
+      if (!SOLID.includes(tileAt(x - 1, r))) { g.fillStyle = "#5e3820"; g.fillRect(X, Y, 3, TP); }
+      if (!SOLID.includes(tileAt(x + 1, r))) { g.fillStyle = "#5e3820"; g.fillRect(X + TP - 3, Y, 3, TP); }
+      if (top && ch === "#") {
+        g.fillStyle = "#3fae4f"; g.fillRect(X, Y, TP, 12); g.fillStyle = "#6fd864"; g.fillRect(X, Y, TP, 5);
+        g.fillStyle = "#3fae4f"; for (let k = 0; k < 4; k++) g.fillRect(X + 2 + k * 8 + rnd() * 3, Y + 12, 3, 3 + rnd() * 4);
+      }
+    } else if (ch === "^") {
+      g.fillStyle = "#454a63"; g.fillRect(X, Y + TP - 5, TP, 5);
+      for (let k = 0; k < 2; k++) {
+        const x0 = X + k * 16;
+        g.fillStyle = "#c9d0dd"; g.beginPath(); g.moveTo(x0 + 1, Y + TP - 4); g.lineTo(x0 + 8, Y + 9); g.lineTo(x0 + 15, Y + TP - 4); g.fill();
+        g.fillStyle = "#ffffff"; g.beginPath(); g.moveTo(x0 + 4, Y + TP - 6); g.lineTo(x0 + 8, Y + 11); g.lineTo(x0 + 8, Y + TP - 6); g.fill();
+      }
+    }
+  }
+}
+const CLOUDS = Array.from({ length: 9 }, (_, i) => { const r = mulberry32(i * 977 + 3); return { x: r() * 1600, y: 0.06 + r() * 0.3, s: 0.6 + r() * 0.8 }; });
+function drawSky(t) {
+  const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, "#3d9cf0"); g.addColorStop(0.6, "#9fd8ff"); g.addColorStop(1, "#e4f6ff");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const R = Math.min(W, H) * 0.09; ctx.fillStyle = "#fff7c8"; ctx.beginPath(); ctx.arc(W * 0.82, H * 0.18, R, 0, 7); ctx.fill();
+  ctx.fillStyle = "#fff7c844"; ctx.beginPath(); ctx.arc(W * 0.82, H * 0.18, R * 1.6, 0, 7); ctx.fill();
+  ctx.fillStyle = "#ffffffdd";
+  for (const c of CLOUDS) { // clouds drift and scroll slowly
+    const x = ((c.x - cam.x * TS * 0.08 - t * 12) % (W + 400) + W + 400) % (W + 400) - 200, y = H * c.y, s = c.s * Math.max(40, TS);
+    for (const [dx, dy, rx, ry] of [[0, 0, 1.2, 0.45], [0.7, -0.2, 0.7, 0.45], [-0.6, -0.1, 0.6, 0.38]]) { ctx.beginPath(); ctx.ellipse(x + dx * s, y + dy * s, rx * s, ry * s, 0, 0, 7); ctx.fill(); }
+  }
+  for (const [k, color, amp, base] of [[0.15, "#8fbde6", 1.4, 7.2], [0.35, "#6fb36a", 0.9, 8.6]]) { // far hills, then near hills
+    ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(0, H);
+    for (let x = 0; x <= W + 20; x += 20) { const wx = x + cam.x * TS * k; ctx.lineTo(x, sy(base) - (Math.sin(wx / 230) * 0.8 + Math.sin(wx / 97) * 0.35) * amp * TS); }
+    ctx.lineTo(W, H); ctx.fill();
+  }
+}
+function drawWater(t) { // the water under the course: falling in sends you back
+  const top = sy(ROWS - 0.35);
+  const g = ctx.createLinearGradient(0, top, 0, H); g.addColorStop(0, "#2fb7d8"); g.addColorStop(1, "#155a8a");
+  ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(0, H);
+  for (let x = 0; x <= W + 16; x += 16) ctx.lineTo(x, top + Math.sin((x + cam.x * TS) / 40 + t * 3) * TS * 0.06);
+  ctx.lineTo(W, H); ctx.fill();
+}
+function rr(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+function drawMovers(t) {
+  for (const m of C.movers) {
+    if (m.x + m.w + CONFIG.slideRange < cam.x - 1 || m.x - CONFIG.slideRange > cam.x + W / TS + 1) continue;
+    ctx.strokeStyle = "#00000030"; ctx.lineWidth = Math.max(2, TS * 0.06); ctx.setLineDash([TS * 0.15, TS * 0.15]); ctx.beginPath();
+    if (m.kind === "slide") { ctx.moveTo(sx(m.x - CONFIG.slideRange + 0.2), sy(m.y + 0.22)); ctx.lineTo(sx(m.x + m.w + CONFIG.slideRange - 0.2), sy(m.y + 0.22)); }
+    else { ctx.moveTo(sx(m.x + m.w / 2), sy(m.y - CONFIG.liftRange)); ctx.lineTo(sx(m.x + m.w / 2), sy(ROWS)); }
+    ctx.stroke(); ctx.setLineDash([]);
+    const a = moverAt(m, t), x = sx(a.x), y = sy(a.y), w = m.w * TS, h = TS * 0.45;
+    ctx.fillStyle = m.kind === "slide" ? "#c98a4b" : "#7d8bd6"; rr(x, y, w, h, TS * 0.12); ctx.fill();
+    ctx.fillStyle = m.kind === "slide" ? "#efc07a" : "#aab6ff"; rr(x + 2, y + 1, w - 4, h * 0.35, TS * 0.08); ctx.fill();
+    ctx.fillStyle = "#00000044"; for (let k = 0; k < m.w; k++) { ctx.beginPath(); ctx.arc(x + (k + 0.5) * TS, y + h * 0.66, TS * 0.05, 0, 7); ctx.fill(); }
+  }
+}
+function drawSprings(now) {
+  for (let r = 0; r < ROWS; r++) for (let c = Math.floor(cam.x); c <= cam.x + W / TS + 1; c++) {
+    if (tileAt(c, r) !== "T") continue;
+    const age = (now - (springAt.get(c) ?? -1e9)) / 1000, squish = age < 0.3 ? Math.sin((age / 0.3) * Math.PI) * 0.18 : 0;
+    const x = sx(c), y = sy(r) - TS * (0.22 - squish);
+    ctx.strokeStyle = "#e6e9f2"; ctx.lineWidth = Math.max(2, TS * 0.07); ctx.beginPath();
+    for (let k = 0; k <= 4; k++) ctx.lineTo(x + TS * (k % 2 ? 0.25 : 0.75), y + ((sy(r) - y) * k) / 4);
+    ctx.stroke();
+    ctx.fillStyle = "#ff5a5f"; rr(x + 1, y - TS * 0.12, TS - 2, TS * 0.18, TS * 0.08); ctx.fill();
+    ctx.fillStyle = "#ffffffaa"; ctx.fillRect(x + TS * 0.2, y - TS * 0.09, TS * 0.6, TS * 0.04);
+  }
+}
+function drawCourseBits(r, t) {
+  for (let i = 1; i < C.cps.length; i++) { // checkpoint posts: green once you've passed them
+    const x = sx(C.cps[i] + 0.25), y = sy(surfaceAt(C.cps[i])), on = me.cp >= i;
+    ctx.fillStyle = "#e8ecf4"; ctx.fillRect(x - TS * 0.04, y - TS * 1.3, TS * 0.08, TS * 1.3);
+    ctx.fillStyle = on ? "#3ddc84" : "#9aa3b5"; ctx.beginPath(); ctx.moveTo(x + TS * 0.04, y - TS * 1.3); ctx.lineTo(x + TS * 0.55, y - TS * 1.12); ctx.lineTo(x + TS * 0.04, y - TS * 0.94); ctx.fill();
+  }
+  const gateUp = Math.max(0, Math.min(1, (clock() - r.startAt) / 400)); // the start gate lifts at GO
+  if (gateUp < 1) {
+    const x = sx(7.6), y = sy(surfaceAt(7));
+    ctx.fillStyle = "#e8ecf4"; ctx.fillRect(x - TS * 0.06, y - TS * 2.2, TS * 0.12, TS * 2.2);
+    ctx.save(); ctx.translate(x, y - TS * 1.1); ctx.rotate(-gateUp * 1.4);
+    for (let k = 0; k < 4; k++) { ctx.fillStyle = k % 2 ? "#ffffff" : "#ff5a5f"; ctx.fillRect(-TS * 0.1, -TS * 0.1 + k * TS * 0.25 - TS * 0.5, TS * 0.2, TS * 0.25); }
+    ctx.restore();
+  }
+  // the flag: a pole and a waving cloth (in the winner's color once someone grabs it)
+  const fx = sx(C.flag.x + 0.5), fy = sy(C.flag.y), top = fy - TS * 3.6;
+  const cloth = (r.winner && (r.results.find((s) => s.i === r.winner) || {}).c) || "#ff5a5f";
+  const glow = ctx.createRadialGradient(fx, fy, 0, fx, fy, TS * 1.6); glow.addColorStop(0, `rgba(255,214,90,${0.5 + Math.sin(t * 5) * 0.15})`); glow.addColorStop(1, "rgba(255,214,90,0)");
+  ctx.fillStyle = glow; ctx.fillRect(fx - TS * 1.6, fy - TS * 1.6, TS * 3.2, TS * 1.7);
+  ctx.fillStyle = "#f4f6fb"; ctx.fillRect(fx - TS * 0.06, top, TS * 0.12, fy - top);
+  ctx.fillStyle = "#ffd23f"; ctx.beginPath(); ctx.arc(fx, top, TS * 0.13, 0, 7); ctx.fill();
+  ctx.fillStyle = cloth; ctx.beginPath(); ctx.moveTo(fx, top + TS * 0.1);
+  for (let k = 0; k <= 10; k++) ctx.lineTo(fx + (k / 10) * TS * 1.5, top + TS * 0.1 + Math.sin(t * 6 - k * 0.6) * TS * 0.09 * (k / 10));
+  for (let k = 10; k >= 0; k--) ctx.lineTo(fx + (k / 10) * TS * 1.5, top + TS * 0.95 + Math.sin(t * 6 - k * 0.6) * TS * 0.09 * (k / 10));
+  ctx.fill();
+  ctx.fillStyle = "#ffffffcc"; ctx.font = `900 ${Math.round(TS * 0.42)}px system-ui`; ctx.textAlign = "center"; ctx.fillText("★", fx + TS * 0.7, top + TS * 0.68);
+}
+function drawRunner(b, t) {
+  if (b.dead || b.d) return;
+  const air = b.a === 2, running = b.a === 1, x = sx(b.x), y = sy(b.y), w = HW * 2 * TS, h = HH * TS;
+  const sq = air ? 0.92 : running ? 1 + Math.sin(t * 20 + b.x) * 0.05 : 1, step = running ? Math.sin(t * 20 + b.x * 3) * TS * 0.12 : 0;
+  ctx.fillStyle = "#00000030"; ctx.beginPath(); ctx.ellipse(x, y, w * 0.5, TS * 0.06, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = "#2b2140"; for (const s of [-1, 1]) { ctx.beginPath(); ctx.ellipse(x + s * (w * 0.22 - step), y - TS * 0.06, TS * 0.12, TS * 0.08, 0, 0, 7); ctx.fill(); } // feet
+  const bw = w / sq, bh = h * sq * 0.92;
+  ctx.fillStyle = b.color; rr(x - bw / 2, y - bh - TS * 0.08, bw, bh, TS * 0.2); ctx.fill();
+  if (b.mine) { ctx.strokeStyle = "#ffffff"; ctx.lineWidth = Math.max(2, TS * 0.05); ctx.stroke(); }
+  ctx.fillStyle = "#ffffff38"; rr(x - bw / 2 + TS * 0.07, y - bh - TS * 0.02, bw - TS * 0.14, bh * 0.26, TS * 0.12); ctx.fill();
+  const stunned = b.stun > 0 || b.s;
+  for (const s of [-1, 1]) { // eyes look where you're going (x x when bonked)
+    const ex = x + b.f * w * 0.14 + s * w * 0.17, ey = y - bh * 0.68 - TS * 0.08;
+    if (stunned) { ctx.strokeStyle = "#2b2140"; ctx.lineWidth = Math.max(1.5, TS * 0.05); ctx.beginPath(); ctx.moveTo(ex - TS * 0.06, ey - TS * 0.06); ctx.lineTo(ex + TS * 0.06, ey + TS * 0.06); ctx.moveTo(ex + TS * 0.06, ey - TS * 0.06); ctx.lineTo(ex - TS * 0.06, ey + TS * 0.06); ctx.stroke(); continue; }
+    ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(ex, ey, TS * 0.1, 0, 7); ctx.fill();
+    ctx.fillStyle = "#1b1f3b"; ctx.beginPath(); ctx.arc(ex + b.f * TS * 0.04, ey, TS * 0.05, 0, 7); ctx.fill();
+  }
+  if (stunned) for (let k = 0; k < 3; k++) { const a = t * 6 + (k * Math.PI * 2) / 3; ctx.fillStyle = "#ffd23f"; ctx.font = `${Math.round(TS * 0.3)}px system-ui`; ctx.textAlign = "center"; ctx.fillText("★", x + Math.cos(a) * TS * 0.4, y - h - TS * 0.25 + Math.sin(a) * TS * 0.1); }
+  if (!ATTRACT) {
+    ctx.font = `700 ${Math.max(11, Math.round(TS * 0.3))}px system-ui`; ctx.textAlign = "center"; ctx.lineWidth = 3; ctx.strokeStyle = "#0008";
+    const label = b.mine ? "You" : b.name || "";
+    ctx.strokeText(label, x, y - h - TS * 0.3); ctx.fillStyle = b.mine ? "#ffd23f" : "#fff"; ctx.fillText(label, x, y - h - TS * 0.3);
+  }
+}
+function draw(r, now, t) {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (!C) { drawSky(t); return; }
+  const touch = touchUI && H > W, bottom = touch ? 120 : 0;
+  TS = ATTRACT ? H / 10.6 : Math.max(22, Math.min((H - bottom - 40) / (ROWS + 0.4), touch ? W / 11 : 200, W / 12));
+  cam.oy = ATTRACT ? H - (ROWS - 0.35) * TS : H - bottom - (ROWS + 0.2) * TS;
+  const view = W / TS, focus = ATTRACT ? packMiddle() : me.dead ? { x: C.cps[me.cp] + 1.5 } : me;
+  const want = Math.max(0, Math.min(C.cols - view, focus.x - view * (ATTRACT ? 0.45 : 0.36)));
+  cam.x += (want - cam.x) * Math.min(1, 6 * Math.min(0.05, dtNow));
+  shake *= 0.86;
+  ctx.setTransform(DPR, 0, 0, DPR, (Math.random() - 0.5) * shake * DPR, (Math.random() - 0.5) * shake * DPR);
+  drawSky(t); drawWater(t);
+  const srcX = Math.max(0, cam.x * TP), srcW = Math.min(courseCv.width - srcX, view * TP + TP);
+  ctx.drawImage(courseCv, srcX, 0, srcW, ROWS * TP, sx(srcX / TP), cam.oy, (srcW / TP) * TS, ROWS * TS);
+  drawSprings(now); drawMovers(t); drawCourseBits(r, t);
+  for (const v of views.values()) drawRunner(v, now / 1000);
+  if (host.acting) for (const b of host.bots.values()) drawRunner({ ...b, a: anim(b) }, now / 1000);
+  drawRunner({ ...me, a: anim(me), mine: true }, now / 1000);
+  for (const p of parts) { ctx.globalAlpha = Math.min(1, (p.life / p.max) * 2); ctx.fillStyle = p.color; ctx.fillRect(sx(p.x) - (p.size * TS) / 2, sy(p.y) - (p.size * TS) / 2, p.size * TS, p.size * TS); }
+  ctx.globalAlpha = 1;
+  for (const f of texts) { ctx.globalAlpha = Math.max(0, 1 - f.t / 1.1); ctx.font = `900 ${Math.round(TS * 0.45)}px system-ui`; ctx.textAlign = "center"; ctx.lineWidth = 4; ctx.strokeStyle = "#0009"; ctx.strokeText(f.text, sx(f.x), sy(f.y - f.t * 0.8)); ctx.fillStyle = f.color; ctx.fillText(f.text, sx(f.x), sy(f.y - f.t * 0.8)); }
+  ctx.globalAlpha = 1;
+}
+/** The preview films the middle of the pack. */
+function packMiddle() { const xs = standings().map((s) => s.x).sort((a, b) => a - b); return { x: xs[Math.floor(xs.length / 2)] || 0 }; }
+function tickFx(dt) {
+  for (let i = parts.length - 1; i >= 0; i--) { const p = parts[i]; p.life -= dt; p.vy += p.grav * dt; p.x += p.vx * dt; p.y += p.vy * dt; if (p.life <= 0) parts.splice(i, 1); }
+  for (let i = texts.length - 1; i >= 0; i--) if ((texts[i].t += dt) > 1.1) texts.splice(i, 1);
+}
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const ordinal = (n) => n + (n % 10 === 1 && n % 100 !== 11 ? "st" : n % 10 === 2 && n % 100 !== 12 ? "nd" : n % 10 === 3 && n % 100 !== 13 ? "rd" : "th");
+let board = null, reconnecting = false, startedAt = 0;
+const dots = new Map();
+function drawTrack(st) { // the race at a glance: everyone's dot between the start and the flag
+  const el = $("track"), seen = new Set(), end = C.flag.x + 0.5;
+  for (const s of st) {
+    seen.add(s.id);
+    let d = dots.get(s.id); if (!d) { d = document.createElement("i"); el.appendChild(d); dots.set(s.id, d); }
+    d.className = s.mine ? "me" : ""; d.style.background = s.color; d.style.left = `${Math.max(0, Math.min(100, (s.x / end) * 100))}%`;
+  }
+  for (const [id, d] of dots) if (!seen.has(id)) { d.remove(); dots.delete(id); }
+}
+function hud(r) {
+  const T = clock();
+  if (ATTRACT) { for (const id of ["place", "hint", "net", "msg"]) $(id).textContent = ""; return; }
+  const st = standings(), mine = st.findIndex((s) => s.mine) + 1;
+  $("track").hidden = false; drawTrack(st);
+  $("place").innerHTML = T < r.startAt ? `Race ${r.id}<small>Get ready…</small>` : `${ordinal(mine)}<small>of ${st.length} runners</small>`;
+  const showCard = r.phase === "done" && T > r.endsAt - CONFIG.resultsMs + 1800; // the cheer first, then the card
+  $("msg").innerHTML = T < r.startAt ? String(Math.ceil((r.startAt - T) / 1000)) : r.phase === "race" && T - r.startAt < 900 ? "GO!"
+    : r.phase === "done" && !showCard ? `${r.winner === me.id ? "You got it!" : "FLAG!"}<small>${r.winner === me.id ? "First to the flag" : `${esc(r.wn || "Someone")} grabbed it first`}</small>` : "";
+  $("hint").textContent = performance.now() - startedAt < 12000 && r.phase !== "done" ? (touchUI ? "◀ ▶ to run · JUMP (hold it to go higher) · land on heads to bonk" : "Arrows or A/D to run · Space to jump (hold for higher) · land on a rival's head to bonk them") : "";
+  const n = livePlayers().length;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : reconnecting ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the race" : ""}`;
+  $("over").hidden = !showCard;
+  if (showCard) {
+    $("overTitle").textContent = r.winner === me.id ? "You win!" : `${r.wn || "Someone"} wins!`;
+    $("overSub").textContent = r.winner === me.id ? "First to the flag." : "Grab it first next time.";
+    $("results").innerHTML = r.results.map((s) => `<li class="${s.i === me.id ? "me" : ""}">${esc(s.i === me.id ? myName : s.n)}<span>${s.i === r.winner ? "🏁" : ""}</span></li>`).join("");
+    $("next").textContent = `Next race in ${Math.max(0, Math.ceil((r.endsAt - T) / 1000))}s`;
+    if (me.shownFor !== r.id) { me.shownFor = r.id; showBoard(r.winner === me.id); }
+  }
+}
+function showBoard(won) {
+  const list = $("board");
+  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li>Loading…</li>";
+  (won ? board.submit(1, "inc").catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No flags yet. Be the first.</li>";
+  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+}
+$("again").onclick = () => { if (host.acting) host.again = true; else net.send("again", {}); };
+let actx = null;
+function sfx(kind) {
+  if (!actx || ATTRACT) return;
+  const [f0, f1, dur, vol, type] = { jump: [420, 700, 0.1, 0.05, "triangle"], spring: [300, 1100, 0.25, 0.07, "triangle"], bonk: [500, 160, 0.15, 0.09, "square"], dead: [400, 60, 0.4, 0.09, "sawtooth"], cp: [660, 990, 0.18, 0.06, "sine"], back: [300, 500, 0.12, 0.05, "sine"], win: [520, 1040, 0.5, 0.08, "triangle"] }[kind];
+  const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain();
+  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur);
+}
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
+$("padL").hidden = $("padR").hidden = !touchUI;
+const wake = () => { if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} } };
+const KEYS = { arrowleft: "left", a: "left", arrowright: "right", d: "right" }, JUMPS = [" ", "arrowup", "w", "z"];
+addEventListener("keydown", (e) => {
+  wake(); const k = e.key.toLowerCase();
+  if (KEYS[k]) { e.preventDefault(); input[KEYS[k]] = true; }
+  if (JUMPS.includes(k)) { e.preventDefault(); if (!e.repeat) input.jump = true; input.held = true; }
+});
+addEventListener("keyup", (e) => { const k = e.key.toLowerCase(); if (KEYS[k]) input[KEYS[k]] = false; if (JUMPS.includes(k)) input.held = false; });
+addEventListener("blur", () => { input.left = input.right = input.held = false; });
+for (const b of document.querySelectorAll(".pad button")) {
+  const k = b.dataset.k;
+  b.addEventListener("pointerdown", (e) => { e.preventDefault(); wake(); b.setPointerCapture(e.pointerId); if (k === "jump") { input.jump = input.held = true; } else input[k] = true; b.classList.add("on"); });
+  for (const ev of ["pointerup", "pointercancel"]) b.addEventListener(ev, () => { if (k === "jump") input.held = false; else input[k] = false; b.classList.remove("on"); });
+}
+cv.addEventListener("pointerdown", wake);
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+let last = performance.now(), lastHb = 0, lastHud = 0, dtNow = 0, seenWinner = "";
+function frame(now) {
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; dtNow = dt; // the first frame can be timed before load: never negative
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  syncClock(now);
+  const t = clock() / 1000;
+  if (isHost()) hostTick(dt, now, t); else host.acting = false;
+  const r = race();
+  if (r) {
+    ensureCourse(r);
+    syncViews(dt);
+    myTick(dt, now, t, r);
+    if (r.winner && r.id + ":" + r.winner !== seenWinner) { seenWinner = r.id + ":" + r.winner; confetti(C.flag.x + 0.5, C.flag.y - 3, 60); if (r.winner === me.id) sfx("win"); }
+  }
+  tickFx(dt);
+  draw(r, now, t);
+  if (r && now - lastHud > 120) { lastHud = now; hud(r); }
+  requestAnimationFrame(frame);
+}
+
+(async function start() {
+  net = await connect();
+  net.onState((st) => { S = st; });
+  net.on("flag", (msg, from) => { if (host.acting && msg) applyFlag(from, Number(msg.r)); });
+  net.on("again", () => { if (host.acting) host.again = true; });
+  net.on("bonk", (msg, from) => {
+    if (!msg) return;
+    const by = typeof msg.by === "string" ? msg.by : from, src = views.get(by) || host.bots.get(by), now = performance.now();
+    const target = msg.to === me.id ? me : host.acting ? host.bots.get(msg.to) : null;
+    if (target && (!src || Math.hypot(src.x - target.x, src.y - target.y) < 3)) { // only from someone right on top of you
+      if (getBonked(target, now) && target === me) { shake = 8; sfx("bonk"); floater(me.x, me.y - 1.4, "BONK!", "#ffd23f"); publish(true); }
+    }
+    const v = views.get(msg.to); if (v) stars(v.x, v.y - HH, 8);
+  });
+  net.onDisconnect(() => { reconnecting = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { reconnecting = false; });
+  if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const taken = new Set([...Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c), ...shared("bots", []).map((b) => b.c)]);
+  me.id = net.sessionId; me.color = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+  net.me.set({ n: myName, c: me.color, hb: Date.now() });
+  if (ATTRACT) { Object.assign(CONFIG, { countdown: 300, resultsMs: 1500, botPause: 0.15 }); me.pace = 0.9; }
+  startedAt = performance.now();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

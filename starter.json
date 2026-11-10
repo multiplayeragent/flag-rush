@@ -1,0 +1,21 @@
+{
+  "name": "Flag Rush",
+  "genre": "platformer",
+  "dim": "2D",
+  "mode": "Versus",
+  "players": "2–8",
+  "hook": "Race through the course. First to the flag wins.",
+  "how": "Run, jump, ride moving platforms and bounce off springs past spikes and pits. Land on a rival's head to make them stumble, and grab the flag before anyone else.",
+  "controls": "Arrow keys or A/D and Space, or on-screen ◀ ▶ and Jump",
+  "uses": [
+    ["Leaderboard", "The players who won the most races."],
+    ["Host-run rounds", "The host's browser runs the countdown, calls the winner and starts the next race; if it leaves, the next player takes over."],
+    ["Bots", "Bots race you and fill the start line until enough people join."],
+    ["Live sync", "Every runner, jump and bonk shows up for everyone at once, on the same course."]
+  ],
+  "ideas": [
+    "Add a speed pad that makes you run twice as fast",
+    "Make the course a lava cave with falling rocks",
+    "Add a new course piece with a seesaw"
+  ]
+}
