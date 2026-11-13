@@ -26,6 +26,7 @@
   .card h3 { margin: 14px 0 4px; font-size: 13px; color: #9fd8ff; text-align: left; }
   .card ol { margin: 0; padding-left: 24px; font-size: 14px; text-align: left; }
   .card li span { float: right; font-variant-numeric: tabular-nums; } .card li.me { color: #ffd23f; font-weight: 700; }
+  .card li.note { list-style: none; margin-left: -24px; opacity: .8; }
   .card p { margin: 10px 0 0; font-size: 13px; opacity: .75; }
   button.go { width: 100%; min-height: 48px; margin-top: 16px; border: 0; border-radius: 12px; background: #ffd23f; color: #3a2400; font: 800 17px system-ui, sans-serif; cursor: pointer; }
   .pad { position: fixed; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 12px); display: flex; gap: 12px; touch-action: none; }
@@ -49,7 +50,7 @@
 <div id="over" hidden><div class="card">
   <h2 id="overTitle"></h2><div id="overSub"></div>
   <h3>This race</h3><ol id="results"></ol>
-  <h3>Most flags won</h3><ol id="board"><li>Loading…</li></ol>
+  <h3>Most flags won</h3><ol id="board"><li class="note">Loading…</li></ol>
   <button class="go" id="again">Race again</button><p id="next"></p>
 </div></div>
 <script>
@@ -415,12 +416,13 @@ function lookAhead(b, t) {
 }
 /** Try a jump without taking it: does it come down safely, further along? */
 function jumpWorks(b, t, plan) {
-  const s = Object.assign(newRunner(b.x, b.y), { vx: b.vx, ground: b.ground, coyote: 0.1, pace: b.pace }), dt = 1 / 30;
-  for (let i = 1; i <= 60; i++) {
-    const ev = stepRunner(s, { dir: i * dt < plan.run ? 1 : 0, jump: i === 1, held: i * dt < plan.hold }, dt, t + i * dt);
+  const dt = Math.max(1 / 120, Math.min(1 / 30, dtNow || 1 / 60)); // the same steps as this screen's frames: other steps predict landings the bot then misses
+  const s = Object.assign(newRunner(b.x, b.y), { vx: b.vx, ground: b.ground, coyote: 0.1, pace: b.pace });
+  for (let i = 1; i <= 2 / dt; i++) {
+    const ev = stepRunner(s, { dir: i * dt < plan.run ? 1 : 0, jump: i === 1, held: i * dt < plan.hold }, dt, t + (i - 1) * dt);
     if (s.dead) return false;
     if (ev === "spring") return true;
-    if (i > 3 && s.ground) return s.x > b.x + 0.6 && !(b.ground && b.ground.kind && s.ground === b.ground);
+    if (i * dt > 0.1 && s.ground) return s.x > b.x + 0.6 && !(b.ground && b.ground.kind && s.ground === b.ground);
   }
   return false;
 }
@@ -766,11 +768,11 @@ function hud(r) {
 }
 function showBoard(won) {
   const list = $("board");
-  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
-  list.innerHTML = "<li>Loading…</li>";
+  if (!board) { list.innerHTML = "<li class=\"note\">Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li class=\"note\">Loading…</li>";
   (won ? board.submit(1, "inc").catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
-    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No flags yet. Be the first.</li>";
-  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li class=\"note\">No flags yet. Be the first.</li>";
+  }).catch(() => { list.innerHTML = "<li class=\"note\">Couldn't load the leaderboard.</li>"; });
 }
 $("again").onclick = () => { if (host.acting) host.again = true; else net.send("again", {}); };
 let actx = null;
