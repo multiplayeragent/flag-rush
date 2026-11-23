@@ -363,7 +363,7 @@ function seatBots() {
   const humans = humansHere(), want = Math.max(0, Math.min(CONFIG.seats, CONFIG.maxRunners) - humans.length);
   while (host.bots.size > want) host.bots.delete([...host.bots.keys()].pop());
   while (host.bots.size < want) {
-    const used = new Set([...host.bots.values()].map((b) => b.name)), taken = new Set([...humans.map(colorOf), ...[...host.bots.values()].map((b) => b.color)]);
+    const used = new Set([...host.bots.values()].map((b) => b.name)), taken = new Set([me.color, ...humans.map(colorOf), ...[...host.bots.values()].map((b) => b.color)]); // me too: in the preview I race but am not a "human"
     const id = "b" + Math.random().toString(36).slice(2, 6), pace = CONFIG.botPace[0] + Math.random() * (CONFIG.botPace[1] - CONFIG.botPace[0]);
     host.bots.set(id, Object.assign(newRunner(0, 0), { id, name: BOT_NAMES.find((n) => !used.has(n)) || "Bot", color: COLORS.find((c) => !taken.has(c)) || "#ccc", pace, basePace: pace }));
   }
@@ -380,7 +380,7 @@ function applyFlag(from, rid) {
   const r = race();
   if (!r || r.phase !== "race" || r.id !== rid || r.winner) return;
   const s = standings().find((x) => x.id === from);
-  if (s && Math.abs(s.x - (C.flag.x + 0.5)) < 3) finishRace(r, from);
+  if (s && Math.abs(s.x - (C.flag.x + 0.5)) < 4) finishRace(r, from); // 4: the flag is a few steps from the end wall
 }
 function hostTick(dt, now, t) {
   if (!host.acting) adopt();
@@ -464,7 +464,7 @@ function botTick(b, dt, now, t, lead, bodies) {
 // ── ME ──────────────────────────────────────────────────────────────────────────────
 const myName = (() => { try { return localStorage.getItem("mpa-name") || ""; } catch { return ""; } })() ||
   ["Speedy", "Bouncy", "Lucky", "Zippy", "Plucky", "Sunny"][Math.floor(Math.random() * 6)] + " " + ["Fox", "Hare", "Gecko", "Otter", "Frog", "Kit"][Math.floor(Math.random() * 6)];
-const me = Object.assign(newRunner(1, 9), { id: "", color: COLORS[0], raceId: -1, lastSend: 0, flagSent: -1, shownFor: -1, auto: ATTRACT });
+const me = Object.assign(newRunner(1, 9), { id: "", color: COLORS[0], raceId: -1, lastSend: 0, flagSent: -1, flagAt: -1e9, shownFor: -1, auto: ATTRACT });
 const input = { left: false, right: false, jump: false, held: false };
 let shake = 0;
 const colorOf = (id) => (id === me.id ? me.color : (S.entities.players?.[id] || {}).c || "#ccc");
@@ -513,8 +513,9 @@ function myTick(dt, now, t, r) {
   if (passCheckpoints(me) && !ATTRACT) { sfx("cp"); floater(me.x, me.y - 1.5, "Checkpoint", "#7dff9a"); }
   const hit = stompOn(me, stompTargets());
   if (hit) { if (me.auto) me.plan = { runUntil: now + 500 }; bonk(hit, me.id); }
-  if (r.phase === "race" && !r.winner && me.flagSent !== r.id && touchingFlag(me)) {
-    me.flagSent = r.id; publish(true); confetti(C.flag.x + 0.5, C.flag.y - 3, 40);
+  if (r.phase === "race" && !r.winner && (touchingFlag(me) || me.flagSent === r.id) && now - me.flagAt > 600) { // said again until the host calls it: a host that just left never heard the first one
+    if (me.flagSent !== r.id) { me.flagSent = r.id; confetti(C.flag.x + 0.5, C.flag.y - 3, 40); }
+    me.flagAt = now; publish(true);
     if (isHost()) applyFlag(me.id, r.id); else net.send("flag", { r: r.id });
   }
   publish(false);
@@ -555,6 +556,8 @@ function syncViews(dt) {
     if (!v) { v = { id: o.id, x: o.s.x, y: o.s.y, raw: null }; views.set(o.id, v); }
     if (o.raw !== v.raw) { // a fresh update
       if (o.s.d && !v.d) poof(v.x, v.y - 0.5, o.color);
+      const springRow = o.s.vy < -18 && !(v.vy < -18) ? [0, 1, 2, 3, 4].map((k) => Math.floor(o.s.y) + k).find((r) => tileAt(Math.floor(o.s.x), r) === "T") : undefined;
+      if (springRow !== undefined) springFx({ x: o.s.x, y: springRow }); // shot up off a spring: the spring bounces here too
       Object.assign(v, { tx: o.s.x, ty: o.s.y, vx: o.s.vx || 0, vy: o.s.vy || 0, f: o.s.f || 1, a: o.s.a, d: o.s.d, s: o.s.s, name: o.name, color: o.color, bot: !!o.bot, raw: o.raw, at: now });
       if (Math.hypot(v.tx - v.x, v.ty - v.y) > 3) { v.x = v.tx; v.y = v.ty; } // respawned: jump there
     }
@@ -835,9 +838,10 @@ function frame(now) {
   net.on("again", () => { if (host.acting) host.again = true; });
   net.on("bonk", (msg, from) => {
     if (!msg) return;
-    const by = typeof msg.by === "string" ? msg.by : from, src = views.get(by) || host.bots.get(by), now = performance.now();
+    const by = msg.by !== from && botList().some((b) => b.i === msg.by) ? msg.by : from; // only a bot's bonk comes from someone else (the host)
+    const src = views.get(by) || host.bots.get(by), now = performance.now();
     const target = msg.to === me.id ? me : host.acting ? host.bots.get(msg.to) : null;
-    if (target && (!src || Math.hypot(src.x - target.x, src.y - target.y) < 3)) { // only from someone right on top of you
+    if (target && src && Math.hypot(src.x - target.x, src.y - target.y) < 3) { // only from someone right on top of you
       if (getBonked(target, now) && target === me) { shake = 8; sfx("bonk"); floater(me.x, me.y - 1.4, "BONK!", "#ffd23f"); publish(true); }
     }
     const v = views.get(msg.to); if (v) stars(v.x, v.y - HH, 8);
